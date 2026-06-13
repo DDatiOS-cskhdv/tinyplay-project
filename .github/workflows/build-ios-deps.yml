@@ -1,101 +1,307 @@
-name: Build TinyPlay iOS Dependencies
+name: Build TinyPlay – Ren'Py iOS Stack via renpy-build
 
+# Trigger manually. Run this once to produce the full set of
+# arm64 libraries and the Python distribution. Outputs are uploaded
+# as Actions artifacts for download and placement into tinyplay/.
 on:
-  workflow_dispatch: # Allows manual trigger of the workflow
+  workflow_dispatch:
+    inputs:
+      renpy_ref:
+        description: 'Ren''Py git ref (tag or branch) to build against'
+        required: true
+        default: '8.1.3'
+      renpybuild_ref:
+        description: 'renpy-build git ref to use'
+        required: true
+        default: 'master'
 
 jobs:
-  build-deps:
+  build-renpy-ios:
     runs-on: macos-14
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    timeout-minutes: 300        # renpy-build takes 2–4 hours on a cold runner
 
-      - name: Set up Python
+    env:
+      # renpy-build reads RENPY_DEPS_INSTALL for host-side library locations.
+      RENPY_DEPS_INSTALL: /usr/local::/usr/local/lib
+
+    steps:
+
+      # -----------------------------------------------------------------------
+      # 1. Checkout renpy-build
+      # -----------------------------------------------------------------------
+      - name: Checkout renpy-build
+        uses: actions/checkout@v4
+        with:
+          repository: renpy/renpy-build
+          ref: ${{ inputs.renpybuild_ref }}
+          path: renpy-build
+
+      # -----------------------------------------------------------------------
+      # 2. Checkout Ren'Py source alongside renpy-build (required by build system)
+      # -----------------------------------------------------------------------
+      - name: Checkout Ren'Py source
+        uses: actions/checkout@v4
+        with:
+          repository: renpy/renpy
+          ref: ${{ inputs.renpy_ref }}
+          path: renpy-build/renpy
+
+      # -----------------------------------------------------------------------
+      # 3. Verify Xcode and iOS SDK availability on the runner
+      # -----------------------------------------------------------------------
+      - name: Verify Xcode SDK
+        run: |
+          echo "=== Xcode version ==="
+          xcodebuild -version
+
+          echo "=== Available SDKs ==="
+          xcodebuild -showsdks
+
+          echo "=== iPhoneOS SDK path ==="
+          xcrun --sdk iphoneos --show-sdk-path
+
+          echo "=== Clang version ==="
+          xcrun --sdk iphoneos clang --version
+
+      # -----------------------------------------------------------------------
+      # 4. Install system build tools via Homebrew
+      # macOS 14 runner ships with Homebrew; these are the tools renpy-build
+      # needs for cross-compilation.
+      # -----------------------------------------------------------------------
+      - name: Install Homebrew build dependencies
+        run: |
+          brew install \
+            autoconf \
+            autoconf-archive \
+            automake \
+            libtool \
+            pkg-config \
+            cmake \
+            ninja \
+            cython \
+            nasm
+
+      # -----------------------------------------------------------------------
+      # 5. Set up the host Python (used by renpy-build itself and as hostpython)
+      # renpy-build requires Python 3.10+ on the host.
+      # -----------------------------------------------------------------------
+      - name: Set up host Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Install Homebrew Dependencies
+      - name: Install renpy-build Python requirements
         run: |
-          brew install autoconf automake libtool pkg-config cmake
+          cd renpy-build
+          pip install --upgrade pip
+          pip install jinja2 toml tomli requests
 
-      - name: Install Python Toolchain Tools
+      # -----------------------------------------------------------------------
+      # 6. Download source tarballs required by renpy-build.
+      # renpy-build expects source archives in renpy-build/tars/.
+      # These URLs match exactly what the build tasks reference.
+      # -----------------------------------------------------------------------
+      - name: Download source tarballs
         run: |
-          python -m pip install --upgrade pip
-          pip install kivy-ios cython==0.29.36
+          mkdir -p renpy-build/tars
+          cd renpy-build/tars
 
-      - name: Verify Environment Xcode and SDK
-        run: |
-          xcodebuild -version
-          xcrun -sdk iphoneos --show-sdk-path
+          # Python 3.12.8 (version from tasks/python3.py)
+          curl -fLO "https://www.python.org/ftp/python/3.12.8/Python-3.12.8.tar.xz"
 
-      - name: Compile iOS Recipes via kivy-ios
-        run: |
-          # Build Python interpreter, SDL2 core, image, ttf, mixer modules, and pyobjus
-          # pygame_sdl2 has been removed since it is NOT a standard kivy-ios recipe and fails toolchain resolution
-          python3 -m kivy_ios.toolchain build python3 sdl2 sdl2_image sdl2_ttf sdl2_mixer pyobjus
+          # SDL2 2.0.20 (version from tasks/sdl2.py)
+          curl -fLO "https://github.com/libsdl-org/SDL/releases/download/release-2.0.20/SDL2-2.0.20.tar.gz"
 
-      - name: Print Compiled Artifact Directory Structure (Debugging)
-        run: |
-          echo "=== Searching for static libraries (*.a) ==="
-          find . -name "*.a"
-          
-          echo "=== Searching for frameworks (*.framework) ==="
-          find . -name "*.framework"
-          
-          echo "=== Searching for xcframeworks (*.xcframework) ==="
-          find . -name "*.xcframework"
+          # SDL2_image 2.6.2 (version from tasks/sdl2_image.py)
+          curl -fLO "https://github.com/libsdl-org/SDL_image/releases/download/release-2.6.2/SDL2_image-2.6.2.tar.gz"
 
-      - name: Package iOS Libraries (Dynamic Discovery)
+          # freetype 2.13.3 (version from tasks/freetype.py)
+          curl -fLO "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz"
+
+          # harfbuzz (version from tasks/harfbuzz.py)
+          curl -fLO "https://github.com/harfbuzz/harfbuzz/releases/download/8.3.0/harfbuzz-8.3.0.tar.xz"
+
+          # fribidi (version from tasks/fribidi.py)
+          curl -fLO "https://github.com/fribidi/fribidi/releases/download/v1.0.13/fribidi-1.0.13.tar.xz"
+
+          # libffi 3.4.5 (version from tasks/libffi.py)
+          curl -fLO "https://github.com/libffi/libffi/releases/download/v3.4.5/libffi-3.4.5.tar.gz"
+
+          # OpenSSL 3.3.2 (version from tasks/openssl.py)
+          curl -fLO "https://www.openssl.org/source/openssl-3.3.2.tar.gz"
+
+          # libjpeg-turbo (used by sdl2_image recipe via libjpeg_turbo.py)
+          curl -fLO "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.2/libjpeg-turbo-3.0.2.tar.gz"
+
+          # libpng (used by sdl2_image via libpng.py)
+          curl -fLO "https://download.sourceforge.net/libpng/libpng-1.6.42.tar.gz"
+
+          # libwebp (used by sdl2_image via libwebp.py)
+          curl -fLO "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.3.2.tar.gz"
+
+          # bzip2 (used by python3)
+          curl -fLO "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+
+          # xz / liblzma (used by python3)
+          curl -fLO "https://github.com/tukaani-project/xz/releases/download/v5.4.5/xz-5.4.5.tar.gz"
+
+          # brotli (used by pythonlib)
+          curl -fLO "https://github.com/google/brotli/archive/refs/tags/v1.1.0.tar.gz"
+          mv v1.1.0.tar.gz brotli-1.1.0.tar.gz
+
+          echo "=== Tarballs downloaded ==="
+          ls -lh .
+
+      # -----------------------------------------------------------------------
+      # 7. Download MetalANGLE (required by iOS rendering)
+      # The renios.py unpack_metalangle task extracts this from source/
+      # -----------------------------------------------------------------------
+      - name: Download MetalANGLE framework
         run: |
-          mkdir -p output/lib
-          
-          # Dynamically locate compiled library files from toolchain outputs
-          # and copy them to the output folder
-          LIBS=("libSDL2.a" "libSDL2_image.a" "libSDL2_ttf.a" "libSDL2_mixer.a" "libpyobjus.a" "libpython3.a" "libpython3.10.a")
-          for lib in "${LIBS[@]}"; do
-            discovered_lib=$(find build/ dist/ -type f -name "$lib" | head -n 1)
-            if [ -n "$discovered_lib" ]; then
-              echo "Discovered and copying: $discovered_lib"
-              cp "$discovered_lib" "output/lib/$(basename "$discovered_lib")"
-            else
-              echo "WARNING: Could not locate compiled static library: $lib"
+          mkdir -p renpy-build/source
+          cd renpy-build/source
+
+          # MetalANGLE xcframework archive - download Ren'Py's pinned version
+          # This provides OpenGL ES 2.0/3.0 over Metal for iOS
+          curl -fLO "https://github.com/kakashidinho/metalangle/releases/download/0.0.12/MetalANGLE.xcframework.tar.gz" \
+            || curl -fL "https://github.com/renpy/renpy-deps/releases/download/2024.1/MetalANGLE.xcframework.tar.gz" \
+              -o MetalANGLE.xcframework.tar.gz
+
+          echo "MetalANGLE downloaded: $(ls -lh MetalANGLE.xcframework.tar.gz)"
+
+      # -----------------------------------------------------------------------
+      # 8. Run renpy-build for iOS arm64 (physical device only)
+      # -----------------------------------------------------------------------
+      - name: Build Ren'Py iOS stack (arm64 device)
+        run: |
+          cd renpy-build
+
+          # renpy-build is invoked as a Python module
+          python3 -m renpybuild \
+            --platform ios \
+            --arch arm64 \
+            --python 3
+
+        # Note: This step compiles in sequence:
+        #   hostpython → libffi → openssl → bzip2 → xz → python3
+        #   → sdl2 → sdl2_image (with libjpeg/libpng/libwebp/libavif)
+        #   → freetype → harfbuzz → fribidi
+        #   → pyobjus → librenpy → renpython → pythonlib → renios.lipo_all
+
+      # -----------------------------------------------------------------------
+      # 9. Debug: list all produced artifacts
+      # -----------------------------------------------------------------------
+      - name: List all produced artifacts
+        run: |
+          cd renpy-build
+
+          echo "=== All .a files produced ==="
+          find tmp/install.ios-arm64/lib/ -name "*.a" | sort
+
+          echo "=== All .framework directories ==="
+          find . -name "*.framework" -type d | sort
+
+          echo "=== All .xcframework directories ==="
+          find . -name "*.xcframework" -type d | sort
+
+          echo "=== renios prototype prebuilt/release contents ==="
+          ls -lh renpy/renios3/prototype/prebuilt/release/ 2>/dev/null || \
+            echo "WARNING: prebuilt/release does not exist yet"
+
+          echo "=== Python distribution (py3-ios-arm64) ==="
+          ls renpy/lib/py3-ios-arm64/ 2>/dev/null || \
+            echo "WARNING: py3-ios-arm64 lib directory not found"
+
+      # -----------------------------------------------------------------------
+      # 10. Verify arm64 architecture on every produced .a library
+      # -----------------------------------------------------------------------
+      - name: Verify arm64 architecture
+        run: |
+          echo "=== Architecture verification ==="
+          FAILED=0
+
+          for lib in renpy-build/renpy/renios3/prototype/prebuilt/release/*.a; do
+            if [ -f "$lib" ]; then
+              ARCHS=$(lipo -archs "$lib" 2>/dev/null || echo "lipo failed")
+              if echo "$ARCHS" | grep -q "arm64"; then
+                echo "PASS: $(basename $lib) — archs: $ARCHS"
+              else
+                echo "FAIL: $(basename $lib) — archs: $ARCHS"
+                FAILED=1
+              fi
             fi
           done
-          
-          # Package all found libraries
-          tar -cvzf ios-libraries.tar.gz -C output/lib .
 
-      - name: Package iOS Headers (Dynamic Discovery)
-        run: |
-          mkdir -p output/include
-          
-          # Dynamically discover include directories in toolchain output and copy them
-          discovered_include=$(find dist/ -type d -name "include" | head -n 1)
-          if [ -n "$discovered_include" ]; then
-            echo "Discovered include folder: $discovered_include"
-            cp -R "$discovered_include"/* output/include/
-          else
-            # Fallback to copy from build directories if dist is missing
-            fallback_include=$(find build/ -type d -name "include" | head -n 1)
-            if [ -n "$fallback_include" ]; then
-              echo "Discovered fallback include: $fallback_include"
-              cp -R "$fallback_include"/* output/include/
-            fi
+          if [ "$FAILED" -eq 1 ]; then
+            echo "ERROR: One or more libraries failed arm64 architecture check."
+            exit 1
           fi
-          
-          # Package include folder
-          tar -cvzf ios-headers.tar.gz -C output/include .
 
-      - name: Upload Libraries Artifact
+      # -----------------------------------------------------------------------
+      # 11. Package libraries artifact
+      # Packages everything from prebuilt/release/ into a single archive.
+      # -----------------------------------------------------------------------
+      - name: Package arm64 static libraries
+        run: |
+          mkdir -p artifacts/lib
+          cp renpy-build/renpy/renios3/prototype/prebuilt/release/*.a artifacts/lib/
+
+          echo "=== Libraries being packaged ==="
+          ls -lh artifacts/lib/
+
+          tar -czf renpy-ios-libraries.tar.gz -C artifacts/lib .
+
+      # -----------------------------------------------------------------------
+      # 12. Package MetalANGLE framework
+      # -----------------------------------------------------------------------
+      - name: Package MetalANGLE framework
+        run: |
+          mkdir -p artifacts/frameworks
+          cp -R renpy-build/renpy/renios3/prototype/Frameworks/MetalANGLE.xcframework \
+            artifacts/frameworks/ 2>/dev/null \
+            || echo "WARNING: MetalANGLE.xcframework not found at expected path"
+
+          tar -czf renpy-ios-frameworks.tar.gz -C artifacts/frameworks .
+
+      # -----------------------------------------------------------------------
+      # 13. Package Python distribution
+      # This is the full compiled Python home for iOS (py3-ios-arm64).
+      # TinyPlay must place this at TinyPlay.app/base/lib/
+      # -----------------------------------------------------------------------
+      - name: Package Python distribution
+        run: |
+          PY_DIST="renpy-build/renpy/lib/py3-ios-arm64"
+
+          if [ -d "$PY_DIST" ]; then
+            tar -czf renpy-ios-pythonlib.tar.gz -C "$PY_DIST" .
+            echo "Python distribution packaged from $PY_DIST"
+            echo "Size: $(du -sh $PY_DIST | cut -f1)"
+          else
+            echo "ERROR: Python distribution directory not found at $PY_DIST"
+            find renpy-build/renpy/lib -maxdepth 2 -type d | head -20
+            exit 1
+          fi
+
+      # -----------------------------------------------------------------------
+      # 14. Upload artifacts
+      # -----------------------------------------------------------------------
+      - name: Upload static libraries
         uses: actions/upload-artifact@v4
         with:
-          name: ios-libraries
-          path: ios-libraries.tar.gz
+          name: renpy-ios-libraries
+          path: renpy-ios-libraries.tar.gz
+          retention-days: 14
 
-      - name: Upload Headers Artifact
+      - name: Upload MetalANGLE framework
         uses: actions/upload-artifact@v4
         with:
-          name: ios-headers
-          path: ios-headers.tar.gz
+          name: renpy-ios-frameworks
+          path: renpy-ios-frameworks.tar.gz
+          retention-days: 14
+
+      - name: Upload Python distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: renpy-ios-pythonlib
+          path: renpy-ios-pythonlib.tar.gz
+          retention-days: 14
