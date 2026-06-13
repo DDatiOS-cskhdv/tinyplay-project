@@ -147,32 +147,47 @@ jobs:
           tar --version | head -1
 
       # -----------------------------------------------------------------------
-      # 9. Download iPhoneOS SDK tarball via ios_toolchains.sh
-      # FIX: tars/ chỉ có README + ios_toolchains.sh, không có SDK trong LFS
-      #      Phải chạy script để download SDK về tars/
+      # 9. Package iPhoneOS SDK from installed Xcode into expected tarball
+      # FIX: ios_toolchains.sh uses DEVELOPER_DIR without leading slash, broken.
+      #      We directly package the Xcode SDK already on the runner.
+      #
+      # renpy-build/tasks/toolchain.py does:
+      #   c.run("tar xaf {{ tars }}/iPhoneOS14.0.sdk.tar.gz")
+      # in directory cross.ios-arm64/, so the tarball must unpack to:
+      #   cross.ios-arm64/iPhoneOS14.0.sdk/   <-- exact dir name matters
       # -----------------------------------------------------------------------
-      - name: Download iPhoneOS SDK toolchain
+      - name: Package iPhoneOS SDK tarball for renpy-build
         run: |
-          echo "=== Files in renpy-build/tars/ (before) ==="
-          ls -lh renpy-build/tars/
+          XCODE_DEV="$(xcode-select -p)"
+          echo "Xcode developer path: $XCODE_DEV"
 
-          echo "=== Running ios_toolchains.sh ==="
-          cd renpy-build/tars
-          bash ios_toolchains.sh
+          IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "iPhoneOS SDK: $IPHONEOS_SDK"
 
-          echo "=== Files in renpy-build/tars/ (after) ==="
-          ls -lh .
+          CXX_INCLUDES="$XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1"
 
-          # Verify SDK có mặt sau khi download
-          SDK_TAR="iPhoneOS14.0.sdk.tar.gz"
-          if [ -f "$SDK_TAR" ]; then
-            echo "OK: $SDK_TAR found ($(du -sh $SDK_TAR | cut -f1))"
+          # Staging: tarball must unpack to a dir named iPhoneOS14.0.sdk/
+          STAGING=$(mktemp -d)
+          SDK_STAGE="$STAGING/iPhoneOS14.0.sdk"
+          echo "Staging: $SDK_STAGE"
+
+          cp -R "$IPHONEOS_SDK" "$SDK_STAGE"
+
+          # Merge C++ headers vào SDK nếu có (ios_toolchains.sh cũng làm vậy)
+          if [ -d "$CXX_INCLUDES" ]; then
+            mkdir -p "$SDK_STAGE/usr/include/c++"
+            cp -R "$CXX_INCLUDES" "$SDK_STAGE/usr/include/c++/v1"
+            echo "C++ includes: OK"
           else
-            echo "ERROR: $SDK_TAR still missing after running ios_toolchains.sh"
-            echo "Available tars:"
-            ls -lh *.tar.gz 2>/dev/null || echo "  (none)"
-            exit 1
+            echo "C++ includes: not found (skipping)"
           fi
+
+          echo "Packing iPhoneOS14.0.sdk.tar.gz ..."
+          tar -czf renpy-build/tars/iPhoneOS14.0.sdk.tar.gz -C "$STAGING" iPhoneOS14.0.sdk
+          rm -rf "$STAGING"
+
+          echo "Done: $(du -sh renpy-build/tars/iPhoneOS14.0.sdk.tar.gz | cut -f1)"
+          ls -lh renpy-build/tars/
 
       # -----------------------------------------------------------------------
       # 10. Build Ren'Py iOS stack (arm64 physical device)
