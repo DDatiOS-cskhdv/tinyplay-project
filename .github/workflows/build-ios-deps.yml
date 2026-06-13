@@ -1,15 +1,12 @@
 name: Build TinyPlay – Ren'Py iOS Stack via renpy-build
 
-# Trigger manually. Run this once to produce the full set of
-# arm64 libraries and the Python distribution. Outputs are uploaded
-# as Actions artifacts for download and placement into tinyplay/.
 on:
   workflow_dispatch:
     inputs:
       renpy_ref:
         description: 'Ren''Py git ref (tag or branch) to build against'
         required: true
-        default: '8.1.3'
+        default: '8.1.3.23091805'
       renpybuild_ref:
         description: 'renpy-build git ref to use'
         required: true
@@ -18,10 +15,9 @@ on:
 jobs:
   build-renpy-ios:
     runs-on: macos-14
-    timeout-minutes: 300        # renpy-build takes 2–4 hours on a cold runner
+    timeout-minutes: 300
 
     env:
-      # renpy-build reads RENPY_DEPS_INSTALL for host-side library locations.
       RENPY_DEPS_INSTALL: /usr/local::/usr/local/lib
 
     steps:
@@ -37,7 +33,8 @@ jobs:
           path: renpy-build
 
       # -----------------------------------------------------------------------
-      # 2. Checkout Ren'Py source alongside renpy-build (required by build system)
+      # 2. Checkout Ren'Py source alongside renpy-build
+      # FIX: thêm fetch-tags: true để resolve tag dạng 8.1.3.23091805
       # -----------------------------------------------------------------------
       - name: Checkout Ren'Py source
         uses: actions/checkout@v4
@@ -45,6 +42,7 @@ jobs:
           repository: renpy/renpy
           ref: ${{ inputs.renpy_ref }}
           path: renpy-build/renpy
+          fetch-tags: true
 
       # -----------------------------------------------------------------------
       # 3. Verify Xcode and iOS SDK availability on the runner
@@ -65,8 +63,6 @@ jobs:
 
       # -----------------------------------------------------------------------
       # 4. Install system build tools via Homebrew
-      # macOS 14 runner ships with Homebrew; these are the tools renpy-build
-      # needs for cross-compilation.
       # -----------------------------------------------------------------------
       - name: Install Homebrew build dependencies
         run: |
@@ -82,8 +78,7 @@ jobs:
             nasm
 
       # -----------------------------------------------------------------------
-      # 5. Set up the host Python (used by renpy-build itself and as hostpython)
-      # renpy-build requires Python 3.10+ on the host.
+      # 5. Set up the host Python
       # -----------------------------------------------------------------------
       - name: Set up host Python
         uses: actions/setup-python@v5
@@ -97,55 +92,26 @@ jobs:
           pip install jinja2 toml tomli requests
 
       # -----------------------------------------------------------------------
-      # 6. Download source tarballs required by renpy-build.
-      # renpy-build expects source archives in renpy-build/tars/.
-      # These URLs match exactly what the build tasks reference.
+      # 6. Download source tarballs required by renpy-build
       # -----------------------------------------------------------------------
       - name: Download source tarballs
         run: |
           mkdir -p renpy-build/tars
           cd renpy-build/tars
 
-          # Python 3.12.8 (version from tasks/python3.py)
           curl -fLO "https://www.python.org/ftp/python/3.12.8/Python-3.12.8.tar.xz"
-
-          # SDL2 2.0.20 (version from tasks/sdl2.py)
           curl -fLO "https://github.com/libsdl-org/SDL/releases/download/release-2.0.20/SDL2-2.0.20.tar.gz"
-
-          # SDL2_image 2.6.2 (version from tasks/sdl2_image.py)
           curl -fLO "https://github.com/libsdl-org/SDL_image/releases/download/release-2.6.2/SDL2_image-2.6.2.tar.gz"
-
-          # freetype 2.13.3 (version from tasks/freetype.py)
           curl -fLO "https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz"
-
-          # harfbuzz (version from tasks/harfbuzz.py)
           curl -fLO "https://github.com/harfbuzz/harfbuzz/releases/download/8.3.0/harfbuzz-8.3.0.tar.xz"
-
-          # fribidi (version from tasks/fribidi.py)
           curl -fLO "https://github.com/fribidi/fribidi/releases/download/v1.0.13/fribidi-1.0.13.tar.xz"
-
-          # libffi 3.4.5 (version from tasks/libffi.py)
           curl -fLO "https://github.com/libffi/libffi/releases/download/v3.4.5/libffi-3.4.5.tar.gz"
-
-          # OpenSSL 3.3.2 (version from tasks/openssl.py)
           curl -fLO "https://www.openssl.org/source/openssl-3.3.2.tar.gz"
-
-          # libjpeg-turbo (used by sdl2_image recipe via libjpeg_turbo.py)
           curl -fLO "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.2/libjpeg-turbo-3.0.2.tar.gz"
-
-          # libpng (used by sdl2_image via libpng.py)
           curl -fLO "https://download.sourceforge.net/libpng/libpng-1.6.42.tar.gz"
-
-          # libwebp (used by sdl2_image via libwebp.py)
           curl -fLO "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.3.2.tar.gz"
-
-          # bzip2 (used by python3)
           curl -fLO "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
-
-          # xz / liblzma (used by python3)
           curl -fLO "https://github.com/tukaani-project/xz/releases/download/v5.4.5/xz-5.4.5.tar.gz"
-
-          # brotli (used by pythonlib)
           curl -fLO "https://github.com/google/brotli/archive/refs/tags/v1.1.0.tar.gz"
           mv v1.1.0.tar.gz brotli-1.1.0.tar.gz
 
@@ -154,15 +120,12 @@ jobs:
 
       # -----------------------------------------------------------------------
       # 7. Download MetalANGLE (required by iOS rendering)
-      # The renios.py unpack_metalangle task extracts this from source/
       # -----------------------------------------------------------------------
       - name: Download MetalANGLE framework
         run: |
           mkdir -p renpy-build/source
           cd renpy-build/source
 
-          # MetalANGLE xcframework archive - download Ren'Py's pinned version
-          # This provides OpenGL ES 2.0/3.0 over Metal for iOS
           curl -fLO "https://github.com/kakashidinho/metalangle/releases/download/0.0.12/MetalANGLE.xcframework.tar.gz" \
             || curl -fL "https://github.com/renpy/renpy-deps/releases/download/2024.1/MetalANGLE.xcframework.tar.gz" \
               -o MetalANGLE.xcframework.tar.gz
@@ -170,23 +133,15 @@ jobs:
           echo "MetalANGLE downloaded: $(ls -lh MetalANGLE.xcframework.tar.gz)"
 
       # -----------------------------------------------------------------------
-      # 8. Run renpy-build for iOS arm64 (physical device only)
+      # 8. Run renpy-build for iOS arm64
       # -----------------------------------------------------------------------
       - name: Build Ren'Py iOS stack (arm64 device)
         run: |
           cd renpy-build
-
-          # renpy-build is invoked as a Python module
           python3 -m renpybuild \
             --platform ios \
             --arch arm64 \
             --python 3
-
-        # Note: This step compiles in sequence:
-        #   hostpython → libffi → openssl → bzip2 → xz → python3
-        #   → sdl2 → sdl2_image (with libjpeg/libpng/libwebp/libavif)
-        #   → freetype → harfbuzz → fribidi
-        #   → pyobjus → librenpy → renpython → pythonlib → renios.lipo_all
 
       # -----------------------------------------------------------------------
       # 9. Debug: list all produced artifacts
@@ -239,7 +194,6 @@ jobs:
 
       # -----------------------------------------------------------------------
       # 11. Package libraries artifact
-      # Packages everything from prebuilt/release/ into a single archive.
       # -----------------------------------------------------------------------
       - name: Package arm64 static libraries
         run: |
@@ -265,8 +219,6 @@ jobs:
 
       # -----------------------------------------------------------------------
       # 13. Package Python distribution
-      # This is the full compiled Python home for iOS (py3-ios-arm64).
-      # TinyPlay must place this at TinyPlay.app/base/lib/
       # -----------------------------------------------------------------------
       - name: Package Python distribution
         run: |
