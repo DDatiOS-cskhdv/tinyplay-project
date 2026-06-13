@@ -122,6 +122,27 @@ jobs:
           # Override BSD tar bằng GNU tar trong PATH cho toàn bộ job
           echo "/opt/homebrew/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
 
+          # renpy-build hardcode clang-18 và lld — tạo symlinks vào /usr/local/bin
+          CLANG_PATH="$(xcrun --find clang)"
+          CLANGPP_PATH="$(xcrun --find clang++)"
+          LLD_PATH="$(xcrun --find ld)" || LLD_PATH=""
+
+          sudo ln -sf "$CLANG_PATH"   /usr/local/bin/clang-18
+          sudo ln -sf "$CLANGPP_PATH" /usr/local/bin/clang++-18
+          echo "clang-18 -> $CLANG_PATH"
+
+          # lld: renpy-build dùng -fuse-ld=lld, thử link ld.lld nếu chưa có
+          if ! command -v lld &>/dev/null; then
+            brew install llvm || true
+            LLD="$(brew --prefix llvm)/bin/lld"
+            if [ -f "$LLD" ]; then
+              sudo ln -sf "$LLD" /usr/local/bin/lld
+              echo "lld -> $LLD"
+            else
+              echo "WARNING: lld not found, build may fail with -fuse-ld=lld"
+            fi
+          fi
+
       # -----------------------------------------------------------------------
       # 7. Set up host Python 3.11
       # -----------------------------------------------------------------------
