@@ -117,31 +117,47 @@ jobs:
             ninja \
             nasm \
             gnu-tar \
-            ccache
+            ccache \
+            llvm \
+            lld
 
           # Override BSD tar bằng GNU tar trong PATH cho toàn bộ job
           echo "/opt/homebrew/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
 
-          # renpy-build hardcode clang-18 và lld — tạo symlinks vào /usr/local/bin
-          CLANG_PATH="$(xcrun --find clang)"
-          CLANGPP_PATH="$(xcrun --find clang++)"
-          LLD_PATH="$(xcrun --find ld)" || LLD_PATH=""
+          # renpy-build hardcode LLVM tools với suffix -18 (clang-18, llvm-ar-18, lld-18, ...)
+          # Brew llvm đã được install ở trên, dùng nó để tạo symlinks
+          LLVM_BIN="$(brew --prefix llvm)/bin"
+          echo "LLVM bin: $LLVM_BIN"
+          ls "$LLVM_BIN"/llvm-* "$LLVM_BIN"/clang* "$LLVM_BIN"/lld* 2>/dev/null | head -20
 
-          sudo ln -sf "$CLANG_PATH"   /usr/local/bin/clang-18
-          sudo ln -sf "$CLANGPP_PATH" /usr/local/bin/clang++-18
-          echo "clang-18 -> $CLANG_PATH"
-
-          # lld: renpy-build dùng -fuse-ld=lld, thử link ld.lld nếu chưa có
-          if ! command -v lld &>/dev/null; then
-            brew install llvm || true
-            LLD="$(brew --prefix llvm)/bin/lld"
-            if [ -f "$LLD" ]; then
-              sudo ln -sf "$LLD" /usr/local/bin/lld
-              echo "lld -> $LLD"
-            else
-              echo "WARNING: lld not found, build may fail with -fuse-ld=lld"
+          # Tạo symlinks cho tất cả tools LLVM với suffix -18
+          for tool in "$LLVM_BIN"/clang "$LLVM_BIN"/clang++ "$LLVM_BIN"/lld \
+                      "$LLVM_BIN"/llvm-ar "$LLVM_BIN"/llvm-ranlib \
+                      "$LLVM_BIN"/llvm-nm "$LLVM_BIN"/llvm-objcopy \
+                      "$LLVM_BIN"/llvm-strip "$LLVM_BIN"/llvm-objdump \
+                      "$LLVM_BIN"/llvm-readelf "$LLVM_BIN"/llvm-dwp; do
+            name=$(basename "$tool")
+            if [ -f "$tool" ]; then
+              sudo ln -sf "$tool" "/usr/local/bin/${name}-18"
+              echo "linked: ${name}-18 -> $tool"
             fi
+          done
+
+          # lld riêng: brew install lld (separate formula từ llvm 22+)
+          brew install lld 2>/dev/null || true
+          LLD_BIN="$(brew --prefix lld)/bin/lld" 2>/dev/null || true
+          if [ -f "$LLD_BIN" ]; then
+            sudo ln -sf "$LLD_BIN" /usr/local/bin/lld
+            sudo ln -sf "$LLD_BIN" /usr/local/bin/lld-18
+            echo "lld linked from $LLD_BIN"
+          elif [ -f "$LLVM_BIN/lld" ]; then
+            sudo ln -sf "$LLVM_BIN/lld" /usr/local/bin/lld
+            sudo ln -sf "$LLVM_BIN/lld" /usr/local/bin/lld-18
+            echo "lld linked from $LLVM_BIN/lld"
           fi
+
+          echo "=== Verify symlinks ==="
+          ls -la /usr/local/bin/clang-18 /usr/local/bin/llvm-ar-18 /usr/local/bin/lld* 2>/dev/null || true
 
       # -----------------------------------------------------------------------
       # 7. Set up host Python 3.11
