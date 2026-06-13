@@ -147,23 +147,30 @@ jobs:
           tar --version | head -1
 
       # -----------------------------------------------------------------------
-      # 9. Verify / download iPhoneOS SDK tarball
-      # FIX: renpy-build/tasks/toolchain.py expects tars/iPhoneOS14.0.sdk.tar.gz
-      #      File này phải có trong LFS của renpy-build hoặc được download ở đây
+      # 9. Download iPhoneOS SDK tarball via ios_toolchains.sh
+      # FIX: tars/ chỉ có README + ios_toolchains.sh, không có SDK trong LFS
+      #      Phải chạy script để download SDK về tars/
       # -----------------------------------------------------------------------
-      - name: Verify iPhoneOS SDK tarball
+      - name: Download iPhoneOS SDK toolchain
         run: |
-          SDK_TAR="renpy-build/tars/iPhoneOS14.0.sdk.tar.gz"
+          echo "=== Files in renpy-build/tars/ (before) ==="
+          ls -lh renpy-build/tars/
 
-          echo "=== Files in renpy-build/tars/ ==="
-          ls -lh renpy-build/tars/ 2>/dev/null || echo "WARNING: tars/ directory not found"
+          echo "=== Running ios_toolchains.sh ==="
+          cd renpy-build/tars
+          bash ios_toolchains.sh
 
+          echo "=== Files in renpy-build/tars/ (after) ==="
+          ls -lh .
+
+          # Verify SDK có mặt sau khi download
+          SDK_TAR="iPhoneOS14.0.sdk.tar.gz"
           if [ -f "$SDK_TAR" ]; then
-            echo "OK: iPhoneOS14.0.sdk.tar.gz found ($(du -sh $SDK_TAR | cut -f1))"
+            echo "OK: $SDK_TAR found ($(du -sh $SDK_TAR | cut -f1))"
           else
-            echo "ERROR: iPhoneOS14.0.sdk.tar.gz not found in renpy-build/tars/"
-            echo "This file should be present via LFS in the renpy-build repository."
-            echo "If LFS is not set up, you need to provide this SDK tarball manually."
+            echo "ERROR: $SDK_TAR still missing after running ios_toolchains.sh"
+            echo "Available tars:"
+            ls -lh *.tar.gz 2>/dev/null || echo "  (none)"
             exit 1
           fi
 
