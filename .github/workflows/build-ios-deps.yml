@@ -116,7 +116,8 @@ jobs:
             cmake \
             ninja \
             nasm \
-            gnu-tar
+            gnu-tar \
+            ccache
 
           # Override BSD tar bằng GNU tar trong PATH cho toàn bộ job
           echo "/opt/homebrew/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
@@ -171,22 +172,35 @@ jobs:
           SDK_STAGE="$STAGING/iPhoneOS14.0.sdk"
           echo "Staging: $SDK_STAGE"
 
-          cp -R "$IPHONEOS_SDK" "$SDK_STAGE"
+          # rsync để follow symlinks đúng cách (cp -R bỏ qua symlinks → 134B)
+          rsync -aL "$IPHONEOS_SDK/" "$SDK_STAGE/"
 
-          # Merge C++ headers vào SDK nếu có (ios_toolchains.sh cũng làm vậy)
+          SDK_SIZE=$(du -sh "$SDK_STAGE" | cut -f1)
+          echo "SDK staged size: $SDK_SIZE"
+
+          # Merge C++ headers nếu có
           if [ -d "$CXX_INCLUDES" ]; then
             mkdir -p "$SDK_STAGE/usr/include/c++"
-            cp -R "$CXX_INCLUDES" "$SDK_STAGE/usr/include/c++/v1"
+            rsync -aL "$CXX_INCLUDES/" "$SDK_STAGE/usr/include/c++/v1/"
             echo "C++ includes: OK"
           else
-            echo "C++ includes: not found (skipping)"
+            echo "C++ includes: not found at $CXX_INCLUDES (skipping)"
           fi
 
           echo "Packing iPhoneOS14.0.sdk.tar.gz ..."
           tar -czf renpy-build/tars/iPhoneOS14.0.sdk.tar.gz -C "$STAGING" iPhoneOS14.0.sdk
           rm -rf "$STAGING"
 
-          echo "Done: $(du -sh renpy-build/tars/iPhoneOS14.0.sdk.tar.gz | cut -f1)"
+          TAR_SIZE=$(du -sh renpy-build/tars/iPhoneOS14.0.sdk.tar.gz | cut -f1)
+          echo "Done: $TAR_SIZE"
+
+          # Sanity check — tarball phải > 10MB
+          TAR_BYTES=$(stat -f%z renpy-build/tars/iPhoneOS14.0.sdk.tar.gz)
+          if [ "$TAR_BYTES" -lt 10000000 ]; then
+            echo "ERROR: tarball too small ($TAR_BYTES bytes) — SDK copy likely failed"
+            exit 1
+          fi
+
           ls -lh renpy-build/tars/
 
       # -----------------------------------------------------------------------
