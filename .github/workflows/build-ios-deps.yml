@@ -23,7 +23,7 @@ jobs:
     steps:
 
       # -----------------------------------------------------------------------
-      # 1. Checkout renpy-build (includes MetalANGLE + tarballs in source/)
+      # 1. Checkout renpy-build (lfs:true để lấy file binary trong source/)
       # -----------------------------------------------------------------------
       - name: Checkout renpy-build
         uses: actions/checkout@v4
@@ -31,11 +31,10 @@ jobs:
           repository: renpy/renpy-build
           ref: ${{ inputs.renpybuild_ref }}
           path: renpy-build
-          lfs: true          # source/ chứa binary files lớn (MetalANGLE, tarballs)
+          lfs: true
 
       # -----------------------------------------------------------------------
-      # 2. Checkout Ren'Py source (phải nằm trong renpy-build/renpy/)
-      # FIX: fetch-tags: true để resolve tag dạng 8.1.3.23091805
+      # 2. Checkout Ren'Py source (fetch-tags:true để resolve tag x.x.x.xxxxxxxx)
       # -----------------------------------------------------------------------
       - name: Checkout Ren'Py source
         uses: actions/checkout@v4
@@ -46,32 +45,24 @@ jobs:
           fetch-tags: true
 
       # -----------------------------------------------------------------------
-      # 3. Verify MetalANGLE và tarballs đã có sẵn trong source/
-      # (renpy-build commit sẵn các file này vào repo, không cần download)
+      # 3. Verify MetalANGLE đã có sẵn từ LFS
       # -----------------------------------------------------------------------
       - name: Verify bundled source files
         run: |
           echo "=== Files in renpy-build/source/ ==="
           ls -lh renpy-build/source/
 
-          echo "=== Verifying MetalANGLE present ==="
           test -f renpy-build/source/MetalANGLE.xcframework.tar.gz \
             && echo "OK: MetalANGLE.xcframework.tar.gz found" \
             || { echo "ERROR: MetalANGLE.xcframework.tar.gz missing!"; exit 1; }
 
-          test -f renpy-build/source/MetalANGLE.framework.ios.zip \
-            && echo "OK: MetalANGLE.framework.ios.zip found" \
-            || echo "WARNING: MetalANGLE.framework.ios.zip missing"
-
       # -----------------------------------------------------------------------
-      # 4. Download các tarballs còn thiếu (không có trong source/)
-      # Chỉ download những gì thực sự thiếu so với source/ đã checkout
+      # 4. Download các tarballs còn thiếu trong source/
       # -----------------------------------------------------------------------
       - name: Download missing tarballs
         run: |
           cd renpy-build/source
 
-          # Hàm download chỉ khi chưa có
           fetch() {
             local dest="$1"
             local url="$2"
@@ -83,19 +74,15 @@ jobs:
             fi
           }
 
-          # harfbuzz (source/ có 8.0.1, tasks có thể cần 8.3.0)
           fetch "harfbuzz-8.3.0.tar.xz" \
             "https://github.com/harfbuzz/harfbuzz/releases/download/8.3.0/harfbuzz-8.3.0.tar.xz"
 
-          # fribidi (source/ có 1.0.7, tasks/fribidi.py có thể cần 1.0.13)
           fetch "fribidi-1.0.13.tar.xz" \
             "https://github.com/fribidi/fribidi/releases/download/v1.0.13/fribidi-1.0.13.tar.xz"
 
-          # libjpeg-turbo (source/ không có version mới)
           fetch "libjpeg-turbo-3.0.2.tar.gz" \
             "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.2/libjpeg-turbo-3.0.2.tar.gz"
 
-          # libpng (source/ có 1.6.43, tasks có thể dùng khác)
           fetch "libpng-1.6.42.tar.gz" \
             "https://download.sourceforge.net/libpng/libpng-1.6.42.tar.gz"
 
@@ -107,17 +94,14 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Verify Xcode SDK
         run: |
-          echo "=== Xcode version ==="
           xcodebuild -version
-
-          echo "=== iOS SDK path ==="
           xcrun --sdk iphoneos --show-sdk-path
-
-          echo "=== Clang version ==="
           xcrun --sdk iphoneos clang --version
 
       # -----------------------------------------------------------------------
       # 6. Install Homebrew build dependencies
+      # FIX: KHÔNG cài cython từ Homebrew (keg-only = không vào PATH)
+      #      Cython sẽ được cài qua pip ở bước 8
       # -----------------------------------------------------------------------
       - name: Install Homebrew build dependencies
         run: |
@@ -129,7 +113,6 @@ jobs:
             pkg-config \
             cmake \
             ninja \
-            cython \
             nasm
 
       # -----------------------------------------------------------------------
@@ -140,15 +123,21 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install renpy-build Python requirements
+      # -----------------------------------------------------------------------
+      # 8. Install Python dependencies
+      # FIX: cài Cython qua pip thay vì Homebrew để nó có trong PATH
+      # -----------------------------------------------------------------------
+      - name: Install Python dependencies
         run: |
-          cd renpy-build
           pip install --upgrade pip
-          pip install jinja2 toml tomli requests
+          pip install Cython jinja2 toml tomli requests
+
+          # Verify cython có trong PATH
+          echo "=== Cython version ==="
+          cython --version
 
       # -----------------------------------------------------------------------
-      # 8. Build Ren'Py iOS stack (arm64 physical device)
-      # renpy-build đọc tarballs từ source/ (đã checkout + bổ sung ở trên)
+      # 9. Build Ren'Py iOS stack (arm64 physical device)
       # -----------------------------------------------------------------------
       - name: Build Ren'Py iOS stack (arm64 device)
         run: |
@@ -159,7 +148,7 @@ jobs:
             --python 3
 
       # -----------------------------------------------------------------------
-      # 9. Debug: list produced artifacts
+      # 10. Debug: list produced artifacts
       # -----------------------------------------------------------------------
       - name: List produced artifacts
         run: |
@@ -177,7 +166,7 @@ jobs:
             || echo "WARNING: py3-ios-arm64 not found"
 
       # -----------------------------------------------------------------------
-      # 10. Verify arm64 architecture
+      # 11. Verify arm64 architecture
       # -----------------------------------------------------------------------
       - name: Verify arm64 architecture
         run: |
@@ -196,7 +185,7 @@ jobs:
           [ "$FAILED" -eq 0 ] || exit 1
 
       # -----------------------------------------------------------------------
-      # 11. Package static libraries
+      # 12. Package static libraries
       # -----------------------------------------------------------------------
       - name: Package arm64 static libraries
         run: |
@@ -206,7 +195,7 @@ jobs:
           tar -czf renpy-ios-libraries.tar.gz -C artifacts/lib .
 
       # -----------------------------------------------------------------------
-      # 12. Package MetalANGLE framework
+      # 13. Package MetalANGLE framework
       # -----------------------------------------------------------------------
       - name: Package MetalANGLE framework
         run: |
@@ -217,7 +206,7 @@ jobs:
           tar -czf renpy-ios-frameworks.tar.gz -C artifacts/frameworks .
 
       # -----------------------------------------------------------------------
-      # 13. Package Python distribution
+      # 14. Package Python distribution
       # -----------------------------------------------------------------------
       - name: Package Python distribution
         run: |
@@ -232,7 +221,7 @@ jobs:
           fi
 
       # -----------------------------------------------------------------------
-      # 14. Upload artifacts
+      # 15. Upload artifacts
       # -----------------------------------------------------------------------
       - name: Upload static libraries
         uses: actions/upload-artifact@v4
