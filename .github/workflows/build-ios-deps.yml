@@ -1,9 +1,10 @@
-name: Build TinyPlay – Ren'Py iOS Stack
+name: Build TinyPlay - Renpy iOS Stack
+
 on:
   workflow_dispatch:
     inputs:
       renpy_ref:
-        description: Ren'Py git ref (tag hoặc branch)
+        description: Renpy git ref (tag or branch)
         required: true
         default: 8.1.3.23091805
       renpybuild_ref:
@@ -11,18 +12,16 @@ on:
         required: true
         default: master
       sdk_release_tag:
-        description: Tag của release chứa iOS SDK (vd: ios-sdk-v1)
+        description: Release tag containing iOS SDK (e.g. ios-sdk-v1)
         required: true
         default: ios-sdk-v1
       arch:
-        description: iOS arch để build
+        description: iOS arch to build (arm64, sim-arm64, sim-x86_64)
         required: true
         default: arm64
-        type: choice
-        options:
-          - arm64
-          - sim-arm64
-          - sim-x86_64
+
+permissions:
+  contents: read
 
 jobs:
   build-renpy-ios:
@@ -37,14 +36,14 @@ jobs:
           https://github.com/renpy/renpy-build \
           ~/renpy-build
 
-    - name: Clone Ren'Py source
+    - name: Clone Renpy source
       run: |
         git clone --depth=1 \
           --branch ${{ inputs.renpy_ref }} \
           https://github.com/renpy/renpy \
           ~/renpy-build/renpy
 
-    - name: Download iOS SDK tarballs từ Releases
+    - name: Download iOS SDK tarballs from Releases
       run: |
         cd ~/renpy-build/tars
 
@@ -98,7 +97,7 @@ jobs:
         cd ~/renpy-build
         bash prepare.sh
 
-    - name: Build Ren'Py iOS (${{ inputs.arch }})
+    - name: Build Renpy iOS (${{ inputs.arch }})
       run: |
         cd ~/renpy-build
         ./build.sh \
