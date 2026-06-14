@@ -29,6 +29,11 @@ jobs:
     timeout-minutes: 300
 
     steps:
+    - name: Update apt cache and fix missing packages
+      run: |
+        sudo apt-get update --fix-missing || true
+        sudo apt-get upgrade -y || true
+
     - name: Clone renpy-build
       run: |
         git clone --depth=1 \
@@ -95,6 +100,8 @@ jobs:
     - name: Run prepare.sh
       run: |
         cd ~/renpy-build
+        # Patch prepare.sh to use --fix-missing in case some packages are unavailable
+        sed -i 's/apt-get install/apt-get install --fix-missing/g' prepare.sh
         bash prepare.sh
 
     - name: Build Renpy iOS (${{ inputs.arch }})
