@@ -1,430 +1,163 @@
 name: Build TinyPlay – Ren'Py iOS Stack via renpy-build
-
-on:
+'on':
   workflow_dispatch:
     inputs:
       renpy_ref:
-        description: 'Ren''Py git ref (tag or branch) to build against'
+        description: Ren'Py git ref (tag or branch) to build against
         required: true
-        default: '8.1.3.23091805'
+        default: 8.1.3.23091805
       renpybuild_ref:
-        description: 'renpy-build git ref to use'
+        description: renpy-build git ref to use
         required: true
-        default: 'master'
-
+        default: master
 jobs:
   build-renpy-ios:
     runs-on: macos-14
     timeout-minutes: 300
-
     env:
       RENPY_DEPS_INSTALL: /usr/local::/usr/local/lib
-
     steps:
+    - name: Checkout renpy-build
+      uses: actions/checkout@v4
+      with:
+        repository: renpy/renpy-build
+        ref: ${{ inputs.renpybuild_ref }}
+        path: renpy-build
+        lfs: true
+    - name: Checkout Ren'Py source
+      uses: actions/checkout@v4
+      with:
+        repository: renpy/renpy
+        ref: ${{ inputs.renpy_ref }}
+        path: renpy-build/renpy
+        fetch-tags: true
+    - name: Verify bundled source files
+      run: "echo \"=== Files in renpy-build/source/ ===\"\nls -lh renpy-build/source/\ntest -f renpy-build/source/MetalANGLE.xcframework.tar.gz\
+        \ \\\n  && echo \"OK: MetalANGLE.xcframework.tar.gz found\" \\\n  || { echo \"ERROR: MetalANGLE.xcframework.tar.gz\
+        \ missing!\"; exit 1; }\n"
+    - name: Download missing tarballs
+      run: "cd renpy-build/source\n\nfetch() {\n  local dest=\"$1\"\n  local url=\"$2\"\n  if [ -f \"$dest\" ]; then\n   \
+        \ echo \"SKIP (exists): $dest\"\n  else\n    echo \"Downloading: $dest\"\n    curl -fL \"$url\" -o \"$dest\"\n  fi\n\
+        }\n\nfetch \"harfbuzz-8.3.0.tar.xz\" \\\n  \"https://github.com/harfbuzz/harfbuzz/releases/download/8.3.0/harfbuzz-8.3.0.tar.xz\"\
+        \nfetch \"fribidi-1.0.13.tar.xz\" \\\n  \"https://github.com/fribidi/fribidi/releases/download/v1.0.13/fribidi-1.0.13.tar.xz\"\
+        \nfetch \"libjpeg-turbo-3.0.2.tar.gz\" \\\n  \"https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.2/libjpeg-turbo-3.0.2.tar.gz\"\
+        \nfetch \"libpng-1.6.42.tar.gz\" \\\n  \"https://download.sourceforge.net/libpng/libpng-1.6.42.tar.gz\"\n\necho \"\
+        === Final source/ contents ===\"\nls -lh .\n"
+    - name: Verify Xcode SDK
+      run: 'xcodebuild -version
 
-      # -----------------------------------------------------------------------
-      # 1. Checkout renpy-build (lfs:true để lấy file binary trong source/)
-      # -----------------------------------------------------------------------
-      - name: Checkout renpy-build
-        uses: actions/checkout@v4
-        with:
-          repository: renpy/renpy-build
-          ref: ${{ inputs.renpybuild_ref }}
-          path: renpy-build
-          lfs: true
+        xcrun --sdk iphoneos --show-sdk-path
 
-      # -----------------------------------------------------------------------
-      # 2. Checkout Ren'Py source (fetch-tags:true để resolve tag x.x.x.xxxxxxxx)
-      # -----------------------------------------------------------------------
-      - name: Checkout Ren'Py source
-        uses: actions/checkout@v4
-        with:
-          repository: renpy/renpy
-          ref: ${{ inputs.renpy_ref }}
-          path: renpy-build/renpy
-          fetch-tags: true
+        xcrun --sdk iphoneos clang --version
 
-      # -----------------------------------------------------------------------
-      # 3. Verify MetalANGLE đã có sẵn từ LFS
-      # -----------------------------------------------------------------------
-      - name: Verify bundled source files
-        run: |
-          echo "=== Files in renpy-build/source/ ==="
-          ls -lh renpy-build/source/
+        '
+    - name: Install Homebrew build dependencies
+      run: "brew install \\\n  autoconf autoconf-archive automake libtool pkg-config \\\n  cmake ninja nasm gnu-tar ccache\
+        \ llvm lld\n\necho \"/opt/homebrew/opt/gnu-tar/libexec/gnubin\" >> $GITHUB_PATH\n\nLLVM_BIN=\"$(brew --prefix llvm)/bin\"\
+        \necho \"LLVM bin: $LLVM_BIN\"\n\nfor tool in \"$LLVM_BIN\"/clang \"$LLVM_BIN\"/clang++ \"$LLVM_BIN\"/lld \\\n   \
+        \         \"$LLVM_BIN\"/llvm-ar \"$LLVM_BIN\"/llvm-ranlib \\\n            \"$LLVM_BIN\"/llvm-nm \"$LLVM_BIN\"/llvm-objcopy\
+        \ \\\n            \"$LLVM_BIN\"/llvm-strip \"$LLVM_BIN\"/llvm-objdump \\\n            \"$LLVM_BIN\"/llvm-readelf \"\
+        $LLVM_BIN\"/llvm-dwp; do\n  name=$(basename \"$tool\")\n  if [ -f \"$tool\" ]; then\n    sudo ln -sf \"$tool\" \"\
+        /usr/local/bin/${name}-18\"\n    echo \"linked: ${name}-18 -> $tool\"\n  fi\ndone\n\nbrew install lld 2>/dev/null\
+        \ || true\nLLD_BIN=\"$(brew --prefix lld)/bin/lld\" 2>/dev/null || true\nif [ -f \"$LLD_BIN\" ]; then\n  sudo ln -sf\
+        \ \"$LLD_BIN\" /usr/local/bin/lld\n  sudo ln -sf \"$LLD_BIN\" /usr/local/bin/lld-18\nelif [ -f \"$LLVM_BIN/lld\" ];\
+        \ then\n  sudo ln -sf \"$LLVM_BIN/lld\" /usr/local/bin/lld\n  sudo ln -sf \"$LLVM_BIN/lld\" /usr/local/bin/lld-18\n\
+        fi\n\necho \"=== Verify symlinks ===\"\nls -la /usr/local/bin/clang-18 /usr/local/bin/llvm-ar-18 /usr/local/bin/lld*\
+        \ 2>/dev/null || true\n"
+    - name: Set up host Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install Python dependencies
+      run: 'pip install --upgrade pip
 
-          test -f renpy-build/source/MetalANGLE.xcframework.tar.gz \
-            && echo "OK: MetalANGLE.xcframework.tar.gz found" \
-            || { echo "ERROR: MetalANGLE.xcframework.tar.gz missing!"; exit 1; }
+        pip install Cython jinja2 toml tomli requests
 
-      # -----------------------------------------------------------------------
-      # 4. Download các tarballs còn thiếu trong source/
-      # -----------------------------------------------------------------------
-      - name: Download missing tarballs
-        run: |
-          cd renpy-build/source
+        echo "=== Cython version ==="
 
-          fetch() {
-            local dest="$1"
-            local url="$2"
-            if [ -f "$dest" ]; then
-              echo "SKIP (exists): $dest"
-            else
-              echo "Downloading: $dest"
-              curl -fL "$url" -o "$dest"
-            fi
-          }
+        cython --version
 
-          fetch "harfbuzz-8.3.0.tar.xz" \
-            "https://github.com/harfbuzz/harfbuzz/releases/download/8.3.0/harfbuzz-8.3.0.tar.xz"
+        echo "=== tar version ==="
 
-          fetch "fribidi-1.0.13.tar.xz" \
-            "https://github.com/fribidi/fribidi/releases/download/v1.0.13/fribidi-1.0.13.tar.xz"
+        tar --version | head -1
 
-          fetch "libjpeg-turbo-3.0.2.tar.gz" \
-            "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.2/libjpeg-turbo-3.0.2.tar.gz"
+        '
+    - name: Package iPhoneOS SDK tarball for renpy-build
+      run: "XCODE_DEV=\"$(xcode-select -p)\"\necho \"Xcode developer path: $XCODE_DEV\"\n\nIPHONEOS_SDK=\"$(xcrun --sdk iphoneos\
+        \ --show-sdk-path)\"\necho \"iPhoneOS SDK: $IPHONEOS_SDK\"\n\nCXX_INCLUDES=\"$XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1\"\
+        \nSTAGING=$(mktemp -d)\nSDK_STAGE=\"$STAGING/iPhoneOS14.0.sdk\"\necho \"Staging: $SDK_STAGE\"\n\nrsync -aL \"$IPHONEOS_SDK/\"\
+        \ \"$SDK_STAGE/\"\necho \"SDK staged size: $(du -sh $SDK_STAGE | cut -f1)\"\n\nif [ -d \"$CXX_INCLUDES\" ]; then\n\
+        \  mkdir -p \"$SDK_STAGE/usr/include/c++\"\n  rsync -aL \"$CXX_INCLUDES/\" \"$SDK_STAGE/usr/include/c++/v1/\"\n  echo\
+        \ \"C++ includes: OK\"\nelse\n  echo \"C++ includes: not found (skipping)\"\nfi\n\necho \"Packing iPhoneOS14.0.sdk.tar.gz\
+        \ ...\"\ntar -czf renpy-build/tars/iPhoneOS14.0.sdk.tar.gz -C \"$STAGING\" iPhoneOS14.0.sdk\nrm -rf \"$STAGING\"\n\
+        echo \"Done: $(du -sh renpy-build/tars/iPhoneOS14.0.sdk.tar.gz | cut -f1)\"\n\nTAR_BYTES=$(stat -f%z renpy-build/tars/iPhoneOS14.0.sdk.tar.gz)\n\
+        if [ \"$TAR_BYTES\" -lt 10000000 ]; then\n  echo \"ERROR: tarball too small ($TAR_BYTES bytes)\"\n  exit 1\nfi\nls\
+        \ -lh renpy-build/tars/\n"
+    - name: Write libffi patch script
+      run: 'python3 -c "import base64,pathlib; pathlib.Path(''/tmp/patch_libffi.py'').write_bytes(base64.b64decode(''aW1wb3J0IHBhdGhsaWIsIHN5cywgcmUKCnAgPSBwYXRobGliLlBhdGgoJ3JlbnB5LWJ1aWxkL3Rhc2tzL2xpYmZmaS5weScpCnNyYyA9IHAucmVhZF90ZXh0KCkKCkNPTkZJR1VSRV9QQVQgPSAnYy5ydW4oIiIie3sgY29uZmlndXJlIH19IiIiKScgIApDT05GSUdVUkVfUEFUMiA9ICJjLnJ1bigne3sgY29uZmlndXJlIH19JykiCgpwYXRjaGVkID0gRmFsc2UKZm9yIHBhdCBpbiBbQ09ORklHVVJFX1BBVCwgQ09ORklHVVJFX1BBVDJdOgogICAgaWYgcGF0IGluIHNyYzoKICAgICAgICBpbmplY3QgPSAnIyBGSVg6IGZvcmNlIEFwcGxlIGFzIGZvciBzeXN2LlMgQ0ZJIGRpcmVjdGl2ZXNcbiAgICBjLmVudigiQ0NBU0ZMQUdTIiwgIi1mbm8taW50ZWdyYXRlZC1hcyIpXG4gICAgJwogICAgICAgIHNyYyA9IHNyYy5yZXBsYWNlKHBhdCwgaW5qZWN0ICsgcGF0LCAxKQogICAgICAgIHBhdGNoZWQgPSBUcnVlCiAgICAgICAgcHJpbnQoJ1BBVENIRUQgKGNvbmZpZ3VyZSBwYXR0ZXJuKScpCiAgICAgICAgYnJlYWsKCmlmIG5vdCBwYXRjaGVkOgogICAgbSA9IHJlLnNlYXJjaChyJ2RlZiBidWlsZFwoY1wpOlxuKFsgXHRdKyknLCBzcmMpCiAgICBpZiBtOgogICAgICAgIGluZGVudCA9IG0uZ3JvdXAoMSkKICAgICAgICBwb3MgPSBtLmVuZCgpCiAgICAgICAgaW5qZWN0ID0gaW5kZW50ICsgJyMgRklYOiBmb3JjZSBBcHBsZSBhcyBmb3Igc3lzdi5TXG4nICsgaW5kZW50ICsgJ2MuZW52KCJDQ0FTRkxBR1MiLCAiLWZuby1pbnRlZ3JhdGVkLWFzIilcbicKICAgICAgICBzcmMgPSBzcmNbOnBvc10gKyBpbmplY3QgKyBzcmNbcG9zOl0KICAgICAgICBwYXRjaGVkID0gVHJ1ZQogICAgICAgIHByaW50KCdQQVRDSEVEIChidWlsZCgpIHRvcCknKQoKaWYgbm90IHBhdGNoZWQ6CiAgICBwcmludCgnRVJST1I6IGNhbm5vdCBwYXRjaCcpCiAgICBwcmludChzcmMpCiAgICBzeXMuZXhpdCgxKQoKcC53cml0ZV90ZXh0KHNyYykKcHJpbnQoJ0RvbmUuJykK''))"
 
-          fetch "libpng-1.6.42.tar.gz" \
-            "https://download.sourceforge.net/libpng/libpng-1.6.42.tar.gz"
+        cat /tmp/patch_libffi.py'
+    - name: Patch libffi -- force Apple external assembler (-fno-integrated-as)
+      run: "# FIX: clang-18 integrated-as rejects CFI register-name notation\n# in libffi/src/aarch64/sysv.S (.cfi_def_cfa\
+        \ x1, 40 etc)\n# -fno-integrated-as delegates to Xcode /usr/bin/as which handles it.\nLIBFFI_TASK=\"renpy-build/tasks/libffi.py\"\
+        \necho \"=== Original libffi.py ===\"\ncat \"$LIBFFI_TASK\"\n\npython3 /tmp/patch_libffi.py || {\n  echo \"ERROR:\
+        \ patch failed\"\n  exit 1\n}\n\necho \"=== Patched libffi.py ===\"\ncat \"$LIBFFI_TASK\"\n"
+    - name: Build Ren'Py iOS stack (arm64 device)
+      run: "cd renpy-build\npython3 -m renpybuild \\\n  --platform ios \\\n  --arch arm64 \\\n  --python 3\n"
+    - name: List produced artifacts
+      run: 'cd renpy-build
 
-          echo "=== Final source/ contents ==="
-          ls -lh .
+        echo "=== .a files ==="
 
-      # -----------------------------------------------------------------------
-      # 5. Verify Xcode và iOS SDK
-      # -----------------------------------------------------------------------
-      - name: Verify Xcode SDK
-        run: |
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
-          xcrun --sdk iphoneos clang --version
+        find tmp/install.ios-arm64/lib/ -name "*.a" | sort 2>/dev/null || echo "tmp/ not found"
 
-      # -----------------------------------------------------------------------
-      # 6. Install Homebrew build dependencies
-      # FIX #1: Thêm gnu-tar để hỗ trợ flag -a (auto-detect compression)
-      #         BSD tar trên macOS không hỗ trợ tar xaf
-      # FIX #2: KHÔNG cài cython từ Homebrew (keg-only = không vào PATH)
-      #         Cython sẽ được cài qua pip ở bước 8
-      # -----------------------------------------------------------------------
-      - name: Install Homebrew build dependencies
-        run: |
-          brew install \
-            autoconf \
-            autoconf-archive \
-            automake \
-            libtool \
-            pkg-config \
-            cmake \
-            ninja \
-            nasm \
-            gnu-tar \
-            ccache \
-            llvm \
-            lld
+        echo "=== prebuilt/release ==="
 
-          # Override BSD tar bằng GNU tar trong PATH cho toàn bộ job
-          echo "/opt/homebrew/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
+        ls -lh renpy/renios3/prototype/prebuilt/release/ 2>/dev/null || echo "WARNING: not found"
 
-          # renpy-build hardcode LLVM tools với suffix -18 (clang-18, llvm-ar-18, lld-18, ...)
-          LLVM_BIN="$(brew --prefix llvm)/bin"
-          echo "LLVM bin: $LLVM_BIN"
-          ls "$LLVM_BIN"/llvm-* "$LLVM_BIN"/clang* "$LLVM_BIN"/lld* 2>/dev/null | head -20
+        echo "=== py3-ios-arm64 ==="
 
-          # Tạo symlinks cho tất cả tools LLVM với suffix -18
-          for tool in "$LLVM_BIN"/clang "$LLVM_BIN"/clang++ "$LLVM_BIN"/lld \
-                      "$LLVM_BIN"/llvm-ar "$LLVM_BIN"/llvm-ranlib \
-                      "$LLVM_BIN"/llvm-nm "$LLVM_BIN"/llvm-objcopy \
-                      "$LLVM_BIN"/llvm-strip "$LLVM_BIN"/llvm-objdump \
-                      "$LLVM_BIN"/llvm-readelf "$LLVM_BIN"/llvm-dwp; do
-            name=$(basename "$tool")
-            if [ -f "$tool" ]; then
-              sudo ln -sf "$tool" "/usr/local/bin/${name}-18"
-              echo "linked: ${name}-18 -> $tool"
-            fi
-          done
+        ls renpy/lib/py3-ios-arm64/ 2>/dev/null || echo "WARNING: not found"
 
-          # lld riêng: brew install lld (separate formula từ llvm 22+)
-          brew install lld 2>/dev/null || true
-          LLD_BIN="$(brew --prefix lld)/bin/lld" 2>/dev/null || true
-          if [ -f "$LLD_BIN" ]; then
-            sudo ln -sf "$LLD_BIN" /usr/local/bin/lld
-            sudo ln -sf "$LLD_BIN" /usr/local/bin/lld-18
-            echo "lld linked from $LLD_BIN"
-          elif [ -f "$LLVM_BIN/lld" ]; then
-            sudo ln -sf "$LLVM_BIN/lld" /usr/local/bin/lld
-            sudo ln -sf "$LLVM_BIN/lld" /usr/local/bin/lld-18
-            echo "lld linked from $LLVM_BIN/lld"
-          fi
+        '
+    - name: Verify arm64 architecture
+      run: "FAILED=0\nfor lib in renpy-build/renpy/renios3/prototype/prebuilt/release/*.a; do\n  if [ -f \"$lib\" ]; then\n\
+        \    ARCHS=$(lipo -archs \"$lib\" 2>/dev/null || echo \"lipo failed\")\n    if echo \"$ARCHS\" | grep -q \"arm64\"\
+        ; then\n      echo \"PASS: $(basename $lib) -- $ARCHS\"\n    else\n      echo \"FAIL: $(basename $lib) -- $ARCHS\"\
+        \n      FAILED=1\n    fi\n  fi\ndone\n[ \"$FAILED\" -eq 0 ] || exit 1\n"
+    - name: Package arm64 static libraries
+      run: 'mkdir -p artifacts/lib
 
-          echo "=== Verify symlinks ==="
-          ls -la /usr/local/bin/clang-18 /usr/local/bin/llvm-ar-18 /usr/local/bin/lld* 2>/dev/null || true
+        cp renpy-build/renpy/renios3/prototype/prebuilt/release/*.a artifacts/lib/
 
-      # -----------------------------------------------------------------------
-      # 7. Set up host Python 3.11
-      # -----------------------------------------------------------------------
-      - name: Set up host Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        ls -lh artifacts/lib/
 
-      # -----------------------------------------------------------------------
-      # 8. Install Python dependencies
-      # FIX: cài Cython qua pip thay vì Homebrew để nó có trong PATH
-      # -----------------------------------------------------------------------
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install Cython jinja2 toml tomli requests
+        tar -czf renpy-ios-libraries.tar.gz -C artifacts/lib .
 
-          echo "=== Cython version ==="
-          cython --version
-
-          echo "=== tar version ==="
-          tar --version | head -1
-
-      # -----------------------------------------------------------------------
-      # 9. Package iPhoneOS SDK from installed Xcode into expected tarball
-      # -----------------------------------------------------------------------
-      - name: Package iPhoneOS SDK tarball for renpy-build
-        run: |
-          XCODE_DEV="$(xcode-select -p)"
-          echo "Xcode developer path: $XCODE_DEV"
-
-          IPHONEOS_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          echo "iPhoneOS SDK: $IPHONEOS_SDK"
-
-          CXX_INCLUDES="$XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1"
-
-          STAGING=$(mktemp -d)
-          SDK_STAGE="$STAGING/iPhoneOS14.0.sdk"
-          echo "Staging: $SDK_STAGE"
-
-          rsync -aL "$IPHONEOS_SDK/" "$SDK_STAGE/"
-
-          SDK_SIZE=$(du -sh "$SDK_STAGE" | cut -f1)
-          echo "SDK staged size: $SDK_SIZE"
-
-          if [ -d "$CXX_INCLUDES" ]; then
-            mkdir -p "$SDK_STAGE/usr/include/c++"
-            rsync -aL "$CXX_INCLUDES/" "$SDK_STAGE/usr/include/c++/v1/"
-            echo "C++ includes: OK"
-          else
-            echo "C++ includes: not found at $CXX_INCLUDES (skipping)"
-          fi
-
-          echo "Packing iPhoneOS14.0.sdk.tar.gz ..."
-          tar -czf renpy-build/tars/iPhoneOS14.0.sdk.tar.gz -C "$STAGING" iPhoneOS14.0.sdk
-          rm -rf "$STAGING"
-
-          TAR_SIZE=$(du -sh renpy-build/tars/iPhoneOS14.0.sdk.tar.gz | cut -f1)
-          echo "Done: $TAR_SIZE"
-
-          TAR_BYTES=$(stat -f%z renpy-build/tars/iPhoneOS14.0.sdk.tar.gz)
-          if [ "$TAR_BYTES" -lt 10000000 ]; then
-            echo "ERROR: tarball too small ($TAR_BYTES bytes) — SDK copy likely failed"
-            exit 1
-          fi
-
-          ls -lh renpy-build/tars/
-
-      # -----------------------------------------------------------------------
-      # 9b. FIX: Patch libffi để dùng Apple 'as' thay vì LLVM integrated-as
-      #
-      # ROOT CAUSE: clang-18 (Homebrew LLVM) dùng integrated assembler mặc định.
-      # Nó không hiểu CFI directives với register-name notation trong sysv.S:
-      #   .cfi_def_cfa x1, 40              → "invalid CFI advance_loc expression"
-      #   .cfi_adjust_cfa_offset (expr)    → "invalid CFI advance_loc expression"
-      #
-      # Apple clang đã được patch để xử lý đúng, nhưng Homebrew LLVM thì không.
-      # FIX: thêm -fno-integrated-as vào CCASFLAGS → delegate sang /usr/bin/as
-      #      của Xcode, vốn hiểu đúng cú pháp ARM64 Apple assembly.
-      # -----------------------------------------------------------------------
-      - name: Patch libffi — force Apple external assembler (-fno-integrated-as)
-        run: |
-          LIBFFI_TASK="renpy-build/tasks/libffi.py"
-
-          echo "=== Original libffi.py ==="
-          cat "$LIBFFI_TASK"
-
-          python3 - <<'PYEOF'
-import pathlib, sys, re
-
-p = pathlib.Path("renpy-build/tasks/libffi.py")
-src = p.read_text()
-
-# Strategy 1: inject CCASFLAGS env trước c.run("{{ configure }}")
-# renpy-build context API: c.env(key, value) sets an env var for subsequent runs
-CONFIGURE_PATTERNS = [
-    'c.run("""{{ configure }}""")',
-    "c.run('{{ configure }}')",
-    'c.run("{{ configure }}")',
-]
-
-patched = False
-for pat in CONFIGURE_PATTERNS:
-    if pat in src:
-        inject = (
-            '# FIX: -fno-integrated-as forces Apple as(1) for sysv.S CFI directives\n'
-            '    c.env("CCASFLAGS", "-fno-integrated-as")\n'
-            '    '
-        )
-        src = src.replace(pat, inject + pat, 1)
-        patched = True
-        print(f"PATCHED via Strategy 1 (pattern: {pat!r})")
-        break
-
-# Strategy 2: nếu không tìm thấy configure pattern, tìm hàm build() và inject vào đầu
-if not patched:
-    m = re.search(r'(def build\(c\):.*?\n)([ \t]+)', src, re.DOTALL)
-    if m:
-        # tìm dòng đầu tiên của body hàm build
-        build_start = src.find('\n', src.find('def build(c):')) + 1
-        # tìm indent
-        indent_m = re.search(r'\n([ \t]+)\S', src[build_start:])
-        if indent_m:
-            indent = indent_m.group(1)
-            inject = (
-                f'{indent}# FIX: -fno-integrated-as forces Apple as(1) for sysv.S CFI directives\n'
-                f'{indent}c.env("CCASFLAGS", "-fno-integrated-as")\n'
-            )
-            src = src[:build_start] + inject + src[build_start:]
-            patched = True
-            print("PATCHED via Strategy 2 (injected at top of build())")
-
-if not patched:
-    print("WARNING: Could not auto-patch libffi.py — applying sed fallback")
-    sys.exit(1)
-
-p.write_text(src)
-print("=== Patched libffi.py ===")
-print(p.read_text())
-PYEOF
-
-          # Fallback nếu Python patch fail: sed trực tiếp vào file
-          # Thêm CCASFLAGS export vào env_sh template nếu có
-          if [ $? -ne 0 ]; then
-            echo "Python patch failed, trying sed fallback..."
-
-            # Tìm và patch configure call bằng sed
-            if grep -q '{{ configure }}' "$LIBFFI_TASK"; then
-              sed -i.bak \
-                's/c\.run("""{{ configure }}""")/c.env("CCASFLAGS", "-fno-integrated-as")\n    c.run("""{{ configure }}""")/' \
-                "$LIBFFI_TASK"
-              echo "Sed patch applied"
-            else
-              echo "ERROR: Cannot find configure pattern in libffi.py"
-              echo "=== libffi.py content ==="
-              cat "$LIBFFI_TASK"
-              exit 1
-            fi
-          fi
-
-          echo "=== Final libffi.py ==="
-          cat "$LIBFFI_TASK"
-
-      # -----------------------------------------------------------------------
-      # 10. Build Ren'Py iOS stack (arm64 physical device)
-      # -----------------------------------------------------------------------
-      - name: Build Ren'Py iOS stack (arm64 device)
-        run: |
-          cd renpy-build
-          python3 -m renpybuild \
-            --platform ios \
-            --arch arm64 \
-            --python 3
-
-      # -----------------------------------------------------------------------
-      # 11. Debug: list produced artifacts
-      # -----------------------------------------------------------------------
-      - name: List produced artifacts
-        run: |
-          cd renpy-build
-
-          echo "=== .a files ==="
-          find tmp/install.ios-arm64/lib/ -name "*.a" | sort 2>/dev/null || echo "tmp/ not found"
-
-          echo "=== prebuilt/release ==="
-          ls -lh renpy/renios3/prototype/prebuilt/release/ 2>/dev/null \
-            || echo "WARNING: prebuilt/release not found"
-
-          echo "=== py3-ios-arm64 ==="
-          ls renpy/lib/py3-ios-arm64/ 2>/dev/null \
-            || echo "WARNING: py3-ios-arm64 not found"
-
-      # -----------------------------------------------------------------------
-      # 12. Verify arm64 architecture
-      # -----------------------------------------------------------------------
-      - name: Verify arm64 architecture
-        run: |
-          FAILED=0
-          for lib in renpy-build/renpy/renios3/prototype/prebuilt/release/*.a; do
-            if [ -f "$lib" ]; then
-              ARCHS=$(lipo -archs "$lib" 2>/dev/null || echo "lipo failed")
-              if echo "$ARCHS" | grep -q "arm64"; then
-                echo "PASS: $(basename $lib) — $ARCHS"
-              else
-                echo "FAIL: $(basename $lib) — $ARCHS"
-                FAILED=1
-              fi
-            fi
-          done
-          [ "$FAILED" -eq 0 ] || exit 1
-
-      # -----------------------------------------------------------------------
-      # 13. Package static libraries
-      # -----------------------------------------------------------------------
-      - name: Package arm64 static libraries
-        run: |
-          mkdir -p artifacts/lib
-          cp renpy-build/renpy/renios3/prototype/prebuilt/release/*.a artifacts/lib/
-          ls -lh artifacts/lib/
-          tar -czf renpy-ios-libraries.tar.gz -C artifacts/lib .
-
-      # -----------------------------------------------------------------------
-      # 14. Package MetalANGLE framework
-      # -----------------------------------------------------------------------
-      - name: Package MetalANGLE framework
-        run: |
-          mkdir -p artifacts/frameworks
-          cp -R renpy-build/renpy/renios3/prototype/Frameworks/MetalANGLE.xcframework \
-            artifacts/frameworks/ 2>/dev/null \
-            || echo "WARNING: MetalANGLE.xcframework not found"
-          tar -czf renpy-ios-frameworks.tar.gz -C artifacts/frameworks .
-
-      # -----------------------------------------------------------------------
-      # 15. Package Python distribution
-      # -----------------------------------------------------------------------
-      - name: Package Python distribution
-        run: |
-          PY_DIST="renpy-build/renpy/lib/py3-ios-arm64"
-          if [ -d "$PY_DIST" ]; then
-            tar -czf renpy-ios-pythonlib.tar.gz -C "$PY_DIST" .
-            echo "Packaged: $(du -sh $PY_DIST | cut -f1)"
-          else
-            echo "ERROR: $PY_DIST not found"
-            find renpy-build/renpy/lib -maxdepth 2 -type d | head -20
-            exit 1
-          fi
-
-      # -----------------------------------------------------------------------
-      # 16. Upload artifacts
-      # -----------------------------------------------------------------------
-      - name: Upload static libraries
-        uses: actions/upload-artifact@v4
-        with:
-          name: renpy-ios-libraries
-          path: renpy-ios-libraries.tar.gz
-          retention-days: 14
-
-      - name: Upload MetalANGLE framework
-        uses: actions/upload-artifact@v4
-        with:
-          name: renpy-ios-frameworks
-          path: renpy-ios-frameworks.tar.gz
-          retention-days: 14
-
-      - name: Upload Python distribution
-        uses: actions/upload-artifact@v4
-        with:
-          name: renpy-ios-pythonlib
-          path: renpy-ios-pythonlib.tar.gz
-          retention-days: 14
+        '
+    - name: Package MetalANGLE framework
+      run: "mkdir -p artifacts/frameworks\ncp -R renpy-build/renpy/renios3/prototype/Frameworks/MetalANGLE.xcframework \\\n\
+        \  artifacts/frameworks/ 2>/dev/null || echo \"WARNING: MetalANGLE.xcframework not found\"\ntar -czf renpy-ios-frameworks.tar.gz\
+        \ -C artifacts/frameworks .\n"
+    - name: Package Python distribution
+      run: "PY_DIST=\"renpy-build/renpy/lib/py3-ios-arm64\"\nif [ -d \"$PY_DIST\" ]; then\n  tar -czf renpy-ios-pythonlib.tar.gz\
+        \ -C \"$PY_DIST\" .\n  echo \"Packaged: $(du -sh $PY_DIST | cut -f1)\"\nelse\n  echo \"ERROR: $PY_DIST not found\"\
+        \n  find renpy-build/renpy/lib -maxdepth 2 -type d | head -20\n  exit 1\nfi\n"
+    - name: Upload static libraries
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-ios-libraries
+        path: renpy-ios-libraries.tar.gz
+        retention-days: 14
+    - name: Upload MetalANGLE framework
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-ios-frameworks
+        path: renpy-ios-frameworks.tar.gz
+        retention-days: 14
+    - name: Upload Python distribution
+      uses: actions/upload-artifact@v4
+      with:
+        name: renpy-ios-pythonlib
+        path: renpy-ios-pythonlib.tar.gz
+        retention-days: 14
