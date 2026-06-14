@@ -125,7 +125,6 @@ jobs:
           echo "/opt/homebrew/opt/gnu-tar/libexec/gnubin" >> $GITHUB_PATH
 
           # renpy-build hardcode LLVM tools với suffix -18 (clang-18, llvm-ar-18, lld-18, ...)
-          # Brew llvm đã được install ở trên, dùng nó để tạo symlinks
           LLVM_BIN="$(brew --prefix llvm)/bin"
           echo "LLVM bin: $LLVM_BIN"
           ls "$LLVM_BIN"/llvm-* "$LLVM_BIN"/clang* "$LLVM_BIN"/lld* 2>/dev/null | head -20
@@ -176,23 +175,14 @@ jobs:
           pip install --upgrade pip
           pip install Cython jinja2 toml tomli requests
 
-          # Verify cython có trong PATH
           echo "=== Cython version ==="
           cython --version
 
-          # Verify GNU tar đã override BSD tar
           echo "=== tar version ==="
           tar --version | head -1
 
       # -----------------------------------------------------------------------
       # 9. Package iPhoneOS SDK from installed Xcode into expected tarball
-      # FIX: ios_toolchains.sh uses DEVELOPER_DIR without leading slash, broken.
-      #      We directly package the Xcode SDK already on the runner.
-      #
-      # renpy-build/tasks/toolchain.py does:
-      #   c.run("tar xaf {{ tars }}/iPhoneOS14.0.sdk.tar.gz")
-      # in directory cross.ios-arm64/, so the tarball must unpack to:
-      #   cross.ios-arm64/iPhoneOS14.0.sdk/   <-- exact dir name matters
       # -----------------------------------------------------------------------
       - name: Package iPhoneOS SDK tarball for renpy-build
         run: |
@@ -204,18 +194,15 @@ jobs:
 
           CXX_INCLUDES="$XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1"
 
-          # Staging: tarball must unpack to a dir named iPhoneOS14.0.sdk/
           STAGING=$(mktemp -d)
           SDK_STAGE="$STAGING/iPhoneOS14.0.sdk"
           echo "Staging: $SDK_STAGE"
 
-          # rsync để follow symlinks đúng cách (cp -R bỏ qua symlinks → 134B)
           rsync -aL "$IPHONEOS_SDK/" "$SDK_STAGE/"
 
           SDK_SIZE=$(du -sh "$SDK_STAGE" | cut -f1)
           echo "SDK staged size: $SDK_SIZE"
 
-          # Merge C++ headers nếu có
           if [ -d "$CXX_INCLUDES" ]; then
             mkdir -p "$SDK_STAGE/usr/include/c++"
             rsync -aL "$CXX_INCLUDES/" "$SDK_STAGE/usr/include/c++/v1/"
@@ -231,7 +218,6 @@ jobs:
           TAR_SIZE=$(du -sh renpy-build/tars/iPhoneOS14.0.sdk.tar.gz | cut -f1)
           echo "Done: $TAR_SIZE"
 
-          # Sanity check — tarball phải > 10MB
           TAR_BYTES=$(stat -f%z renpy-build/tars/iPhoneOS14.0.sdk.tar.gz)
           if [ "$TAR_BYTES" -lt 10000000 ]; then
             echo "ERROR: tarball too small ($TAR_BYTES bytes) — SDK copy likely failed"
@@ -239,6 +225,101 @@ jobs:
           fi
 
           ls -lh renpy-build/tars/
+
+      # -----------------------------------------------------------------------
+      # 9b. FIX: Patch libffi để dùng Apple 'as' thay vì LLVM integrated-as
+      #
+      # ROOT CAUSE: clang-18 (Homebrew LLVM) dùng integrated assembler mặc định.
+      # Nó không hiểu CFI directives với register-name notation trong sysv.S:
+      #   .cfi_def_cfa x1, 40              → "invalid CFI advance_loc expression"
+      #   .cfi_adjust_cfa_offset (expr)    → "invalid CFI advance_loc expression"
+      #
+      # Apple clang đã được patch để xử lý đúng, nhưng Homebrew LLVM thì không.
+      # FIX: thêm -fno-integrated-as vào CCASFLAGS → delegate sang /usr/bin/as
+      #      của Xcode, vốn hiểu đúng cú pháp ARM64 Apple assembly.
+      # -----------------------------------------------------------------------
+      - name: Patch libffi — force Apple external assembler (-fno-integrated-as)
+        run: |
+          LIBFFI_TASK="renpy-build/tasks/libffi.py"
+
+          echo "=== Original libffi.py ==="
+          cat "$LIBFFI_TASK"
+
+          python3 - <<'PYEOF'
+import pathlib, sys, re
+
+p = pathlib.Path("renpy-build/tasks/libffi.py")
+src = p.read_text()
+
+# Strategy 1: inject CCASFLAGS env trước c.run("{{ configure }}")
+# renpy-build context API: c.env(key, value) sets an env var for subsequent runs
+CONFIGURE_PATTERNS = [
+    'c.run("""{{ configure }}""")',
+    "c.run('{{ configure }}')",
+    'c.run("{{ configure }}")',
+]
+
+patched = False
+for pat in CONFIGURE_PATTERNS:
+    if pat in src:
+        inject = (
+            '# FIX: -fno-integrated-as forces Apple as(1) for sysv.S CFI directives\n'
+            '    c.env("CCASFLAGS", "-fno-integrated-as")\n'
+            '    '
+        )
+        src = src.replace(pat, inject + pat, 1)
+        patched = True
+        print(f"PATCHED via Strategy 1 (pattern: {pat!r})")
+        break
+
+# Strategy 2: nếu không tìm thấy configure pattern, tìm hàm build() và inject vào đầu
+if not patched:
+    m = re.search(r'(def build\(c\):.*?\n)([ \t]+)', src, re.DOTALL)
+    if m:
+        # tìm dòng đầu tiên của body hàm build
+        build_start = src.find('\n', src.find('def build(c):')) + 1
+        # tìm indent
+        indent_m = re.search(r'\n([ \t]+)\S', src[build_start:])
+        if indent_m:
+            indent = indent_m.group(1)
+            inject = (
+                f'{indent}# FIX: -fno-integrated-as forces Apple as(1) for sysv.S CFI directives\n'
+                f'{indent}c.env("CCASFLAGS", "-fno-integrated-as")\n'
+            )
+            src = src[:build_start] + inject + src[build_start:]
+            patched = True
+            print("PATCHED via Strategy 2 (injected at top of build())")
+
+if not patched:
+    print("WARNING: Could not auto-patch libffi.py — applying sed fallback")
+    sys.exit(1)
+
+p.write_text(src)
+print("=== Patched libffi.py ===")
+print(p.read_text())
+PYEOF
+
+          # Fallback nếu Python patch fail: sed trực tiếp vào file
+          # Thêm CCASFLAGS export vào env_sh template nếu có
+          if [ $? -ne 0 ]; then
+            echo "Python patch failed, trying sed fallback..."
+
+            # Tìm và patch configure call bằng sed
+            if grep -q '{{ configure }}' "$LIBFFI_TASK"; then
+              sed -i.bak \
+                's/c\.run("""{{ configure }}""")/c.env("CCASFLAGS", "-fno-integrated-as")\n    c.run("""{{ configure }}""")/' \
+                "$LIBFFI_TASK"
+              echo "Sed patch applied"
+            else
+              echo "ERROR: Cannot find configure pattern in libffi.py"
+              echo "=== libffi.py content ==="
+              cat "$LIBFFI_TASK"
+              exit 1
+            fi
+          fi
+
+          echo "=== Final libffi.py ==="
+          cat "$LIBFFI_TASK"
 
       # -----------------------------------------------------------------------
       # 10. Build Ren'Py iOS stack (arm64 physical device)
