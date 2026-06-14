@@ -1,0 +1,66 @@
+name: Create iOS SDK Tarballs (Run Once)
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Tag để upload lên Releases (vd: ios-sdk-v1)
+        required: true
+        default: ios-sdk-v1
+
+jobs:
+  create-ios-sdk:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout renpy-build để lấy ios_toolchains.sh
+      uses: actions/checkout@v4
+      with:
+        repository: renpy/renpy-build
+        path: renpy-build
+
+    - name: Verify Xcode
+      run: |
+        xcodebuild -version
+        xcrun --sdk iphoneos --show-sdk-path
+        xcrun --sdk iphonesimulator --show-sdk-path
+
+    - name: Chạy ios_toolchains.sh để tạo SDK tarballs
+      run: |
+        cd renpy-build/tars
+        cat ios_toolchains.sh
+        bash ios_toolchains.sh /Applications/Xcode_15.4.app
+        echo "=== Kết quả ==="
+        ls -lh *.tar.gz *.tar.bz2 2>/dev/null || true
+
+    - name: Kiểm tra file đầu ra
+      run: |
+        cd renpy-build/tars
+        test -f iPhoneOS14.0.sdk.tar.gz \
+          && echo "OK: iPhoneOS14.0.sdk.tar.gz ($(du -sh iPhoneOS14.0.sdk.tar.gz | cut -f1))" \
+          || { echo "ERROR: iPhoneOS14.0.sdk.tar.gz không tồn tại!"; exit 1; }
+        test -f iPhoneSimulator14.0.sdk.tar.gz \
+          && echo "OK: iPhoneSimulator14.0.sdk.tar.gz ($(du -sh iPhoneSimulator14.0.sdk.tar.gz | cut -f1))" \
+          || { echo "ERROR: iPhoneSimulator14.0.sdk.tar.gz không tồn tại!"; exit 1; }
+
+    - name: Copy SDK files ra workspace
+      run: |
+        cp renpy-build/tars/iPhoneOS14.0.sdk.tar.gz .
+        cp renpy-build/tars/iPhoneSimulator14.0.sdk.tar.gz .
+
+    - name: Upload lên GitHub Releases
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ inputs.release_tag }}
+        name: iOS SDK Tarballs (${{ inputs.release_tag }})
+        body: |
+          iOS SDK tarballs được tạo từ Xcode 15.4 trên macos-14.
+          Dùng cho workflow build Ren'Py iOS trên Ubuntu.
+
+          - iPhoneOS14.0.sdk.tar.gz — SDK cho device thật (arm64)
+          - iPhoneSimulator14.0.sdk.tar.gz — SDK cho simulator
+        files: |
+          iPhoneOS14.0.sdk.tar.gz
+          iPhoneSimulator14.0.sdk.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
