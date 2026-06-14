@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Tag de upload len Releases (vd ios-sdk-v1)
+        description: Tag to upload to Releases (e.g. ios-sdk-v1)
         required: true
         default: ios-sdk-v1
 
@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-    - name: Checkout renpy-build de lay ios_toolchains.sh
+    - name: Checkout renpy-build to get ios_toolchains.sh
       uses: actions/checkout@v4
       with:
         repository: renpy/renpy-build
@@ -26,36 +26,57 @@ jobs:
         xcrun --sdk iphoneos --show-sdk-path
         xcrun --sdk iphonesimulator --show-sdk-path
 
-    - name: Chay ios_toolchains.sh de tao SDK tarballs
+    - name: Run ios_toolchains.sh to create SDK tarballs
       run: |
         cd renpy-build/tars
         bash ios_toolchains.sh /Applications/Xcode_15.4.app
-        echo "=== Ket qua ==="
+        echo "=== Raw output ==="
         ls -lh *.tar.gz *.tar.bz2 2>/dev/null || true
 
-    - name: Kiem tra file dau ra
+    - name: Rename SDK files to names expected by renpy-build
       run: |
         cd renpy-build/tars
-        test -f iPhoneOS14.0.sdk.tar.gz \
-          && echo "OK: iPhoneOS14.0.sdk.tar.gz" \
-          || { echo "ERROR: iPhoneOS14.0.sdk.tar.gz khong ton tai!"; exit 1; }
-        test -f iPhoneSimulator14.0.sdk.tar.gz \
-          && echo "OK: iPhoneSimulator14.0.sdk.tar.gz" \
-          || { echo "ERROR: iPhoneSimulator14.0.sdk.tar.gz khong ton tai!"; exit 1; }
 
-    - name: Copy SDK files ra workspace
+        # ios_toolchains.sh names files after the actual SDK version (e.g. 17.5)
+        # renpy-build expects them named as 14.0 — just rename them
+
+        IPHONE_SRC=$(ls iPhoneOS*.sdk.tar.gz 2>/dev/null | head -1)
+        SIM_SRC=$(ls iPhoneSimulator*.sdk.tar.gz 2>/dev/null | head -1)
+
+        if [ -z "$IPHONE_SRC" ]; then
+          echo "ERROR: no iPhoneOS*.sdk.tar.gz found"
+          exit 1
+        fi
+        if [ -z "$SIM_SRC" ]; then
+          echo "ERROR: no iPhoneSimulator*.sdk.tar.gz found"
+          exit 1
+        fi
+
+        echo "Renaming: $IPHONE_SRC -> iPhoneOS14.0.sdk.tar.gz"
+        mv "$IPHONE_SRC" iPhoneOS14.0.sdk.tar.gz
+
+        echo "Renaming: $SIM_SRC -> iPhoneSimulator14.0.sdk.tar.gz"
+        mv "$SIM_SRC" iPhoneSimulator14.0.sdk.tar.gz
+
+        echo "=== Final ==="
+        ls -lh iPhoneOS14.0.sdk.tar.gz iPhoneSimulator14.0.sdk.tar.gz
+
+    - name: Copy SDK files to workspace
       run: |
         cp renpy-build/tars/iPhoneOS14.0.sdk.tar.gz .
         cp renpy-build/tars/iPhoneSimulator14.0.sdk.tar.gz .
 
-    - name: Upload len GitHub Releases
+    - name: Upload to GitHub Releases
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ inputs.release_tag }}
         name: iOS SDK Tarballs (${{ inputs.release_tag }})
         body: |
-          iOS SDK tarballs duoc tao tu Xcode 15.4 tren macos-14.
-          Dung cho workflow build Renpy iOS tren Ubuntu.
+          iOS SDK tarballs generated from Xcode 15.4 on macos-14.
+          Used by the Ren'Py iOS build workflow on Ubuntu.
+
+          Note: files are renamed from their actual SDK version to 14.0
+          as required by renpy-build.
         files: |
           iPhoneOS14.0.sdk.tar.gz
           iPhoneSimulator14.0.sdk.tar.gz
