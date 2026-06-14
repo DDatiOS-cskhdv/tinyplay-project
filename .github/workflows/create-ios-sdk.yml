@@ -8,6 +8,9 @@ on:
         required: true
         default: ios-sdk-v1
 
+permissions:
+  contents: write
+
 jobs:
   create-ios-sdk:
     runs-on: macos-14
@@ -36,9 +39,6 @@ jobs:
     - name: Rename SDK files to names expected by renpy-build
       run: |
         cd renpy-build/tars
-
-        # ios_toolchains.sh names files after the actual SDK version (e.g. 17.5)
-        # renpy-build expects them named as 14.0 — just rename them
 
         IPHONE_SRC=$(ls iPhoneOS*.sdk.tar.gz 2>/dev/null | head -1)
         SIM_SRC=$(ls iPhoneSimulator*.sdk.tar.gz 2>/dev/null | head -1)
@@ -73,10 +73,7 @@ jobs:
         name: iOS SDK Tarballs (${{ inputs.release_tag }})
         body: |
           iOS SDK tarballs generated from Xcode 15.4 on macos-14.
-          Used by the Ren'Py iOS build workflow on Ubuntu.
-
-          Note: files are renamed from their actual SDK version to 14.0
-          as required by renpy-build.
+          Used by the Renpy iOS build workflow on Ubuntu.
         files: |
           iPhoneOS14.0.sdk.tar.gz
           iPhoneSimulator14.0.sdk.tar.gz
